@@ -11,7 +11,7 @@ board_size = 11
 depth = 2
 board_winner = -1
 scoring_combos = dict()
-board_candidates = set()
+open_board_spots = set()
 new_board_winner = None
 is_human_turn = None
 game_winning_color = None
@@ -23,6 +23,11 @@ WINNING_SCORE = 2000000
 def detect_5(board, col):
     global game_winning_color
     is_win = False
+
+    if len(open_board_spots) == 0:
+        is_win = True
+        game_winning_color = -1
+        return is_win
 
     for a in range(len(board)-4):
         for b in range(len(board)):
@@ -97,6 +102,8 @@ def detect_5(board, col):
                     if y == len(board)-5 or x == len(board)-5:
                         if board[y-1][x-1] != col:
                             is_win = True
+
+
     if is_win:
         game_winning_color = col
 
@@ -184,11 +191,11 @@ def update_scoring_dict():
 
 def game_over(board):
     global board_winner
-    global board_candidates
+    global open_board_spots
     global new_board_winner
 
     board_winner = new_board_winner
-    if board_winner == -1 or len(board_candidates) != 0:
+    if board_winner == -1 or len(open_board_spots) != 0:
         return False
     else:
         return True
@@ -226,7 +233,7 @@ def get_human_move():
 
     return row, col
 
-def update_game_status(row, col, color, board):
+def eval_status(row, col, color, board):
     global board_size
     global new_board_winner
     best = 1
@@ -353,7 +360,7 @@ def calc_score(curr_str):
 
     return score
 
-def update_player_score(board, row, col, player):
+def plyr_score_update(board, row, col, player):
     global board_size
     color = player['color']
     # Score in that row (going right)
@@ -419,7 +426,7 @@ def update_player_score(board, row, col, player):
     player['ldiags'][board_size + diff - 1] = score
     x = 5
 
-def compute_next_move(com_player, human_player, my_move, board, alpha, beta, row, col, board_candidates):
+def minimax_move(com_player, human_player, my_move, board, alpha, beta, row, col, open_board_spots):
     global depth
     global board_size
     global new_board_winner
@@ -432,7 +439,7 @@ def compute_next_move(com_player, human_player, my_move, board, alpha, beta, row
 
     # Create new temp board
     new_board = copy.deepcopy(board)
-    new_board_candidate_squares = copy.deepcopy(board_candidates)
+    minimax_open_spots = copy.deepcopy(open_board_spots)
 
     # human is player 1
     new_player_one = copy.deepcopy(human_player)
@@ -440,32 +447,29 @@ def compute_next_move(com_player, human_player, my_move, board, alpha, beta, row
     new_player_two = copy.deepcopy(com_player)
     # pdb.set_trace()
     # Update new board
-    if my_move:
+    if not my_move:
+        new_board[row][col] = human_player['color']
+        minimax_open_spots.remove(row * board_size + col)
+        eval_status(row, col, human_player['color'], new_board)
+        if new_board_winner == human_player['color']:
+            return [-WINNING_SCORE, depth]
+    else:
         new_board[row][col] = com_player['color']
-        new_board_candidate_squares.remove(row * board_size + col)
-        update_game_status(row, col, com_player['color'], new_board)
+        minimax_open_spots.remove(row * board_size + col)
+        eval_status(row, col, com_player['color'], new_board)
         if new_board_winner == com_player['color']:
             return [WINNING_SCORE, depth]
 
-    else:
-        new_board[row][col] = human_player['color']
-        new_board_candidate_squares.remove(row * board_size + col)
-        update_game_status(row, col, human_player['color'], new_board)
-        if new_board_winner == human_player['color']:
-            return [-WINNING_SCORE, depth]
-
-
     # Update scores for both players
-    update_player_score(new_board, row, col, new_player_one)
-    update_player_score(new_board, row, col, new_player_two)
+    plyr_score_update(new_board, row, col, new_player_one)
+    plyr_score_update(new_board, row, col, new_player_two)
 
-    if len(new_board_candidate_squares) == 0:
-        print "new_board_candidate_squares length is 0.....Returning 0"
+    if len(minimax_open_spots) == 0:
         return [new_player_one['score'] - new_player_two['score'], -1]
 
     my_move = not my_move
 
-    valid_moves = copy.deepcopy(new_board_candidate_squares)
+    valid_moves = copy.deepcopy(minimax_open_spots)
     # pdb.set_trace()
     best_score_diff = []
     # pdb.set_trace()
@@ -478,7 +482,7 @@ def compute_next_move(com_player, human_player, my_move, board, alpha, beta, row
         new_move = m
         new_move_row = new_move / board_size
         new_move_col = new_move % board_size
-        new_score_diff = compute_next_move(new_player_one, new_player_two, my_move, new_board, alpha, beta, new_move_row, new_move_col, new_board_candidate_squares)
+        new_score_diff = minimax_move(new_player_one, new_player_two, my_move, new_board, alpha, beta, new_move_row, new_move_col, minimax_open_spots)
         if my_move:
             if best_score_diff[0] == new_score_diff [0]:
                 if best_score_diff[1] < new_score_diff[1]:
@@ -496,11 +500,11 @@ def compute_next_move(com_player, human_player, my_move, board, alpha, beta, row
     return best_score_diff
 
 def get_comp_move(board, human_player, com_player, is_dark_move):
-    global board_candidates
+    global open_board_spots
     global human_is_dark
     global board_size
     print "COM is calculating its next move, please wait up to 30 seconds"
-    if (len(board_candidates) == 0):
+    if (len(open_board_spots) == 0):
         return None, None
 
     # Calculating best move for computer
@@ -508,7 +512,7 @@ def get_comp_move(board, human_player, com_player, is_dark_move):
     best_possible_moves = set()
     best_win_depth = -1
     # Explore each possible candidate for next move
-    for m in board_candidates:
+    for m in open_board_spots:
         alpha = best_score
         beta = -best_score
         res = None
@@ -516,30 +520,29 @@ def get_comp_move(board, human_player, com_player, is_dark_move):
         move_row = move / board_size
         move_col = move % board_size
         if is_dark_move:
-            res = compute_next_move(human_player, com_player, True, board, alpha, beta, move_row, move_col, board_candidates)
+            res = minimax_move(human_player, com_player, True, board, alpha, beta, move_row, move_col, open_board_spots)
         else:
-            res = compute_next_move(com_player, human_player, True, board, alpha, beta, move_row, move_col, board_candidates)
+            res = minimax_move(com_player, human_player, True, board, alpha, beta, move_row, move_col, open_board_spots)
 
         new_score = res[0]
         new_win_depth = res[1]
 
-        if new_score > best_score:
-            best_score = new_score
-            best_possible_moves = set()
-            best_possible_moves.add(int(move))
-            best_win_depth = new_win_depth
-        elif new_score == best_score:
+        if new_score == best_score:
             if new_win_depth > best_win_depth:
                 best_possible_moves = set()
                 best_possible_moves.add(int(move))
                 best_win_depth = new_win_depth
             elif new_win_depth == best_win_depth:
                 best_possible_moves.add(int(move))
+        elif new_score > best_score:
+            best_score = new_score
+            best_possible_moves = set()
+            best_possible_moves.add(int(move))
+            best_win_depth = new_win_depth
+
 
     best_move = None
     rand_i = random.randint(0, len(best_possible_moves))
-
-
 
     for index, m in enumerate(best_possible_moves):
         move = m
@@ -579,8 +582,8 @@ def create_new_player(player, is_human):
     player['last_move_row'] = -1
     player['last_move_col'] = -1
 
-def apply_move(board, row, col, color, player):
-    global board_candidates
+def make_move(board, row, col, color, player):
+    global open_board_spots
     global board_size
 
 
@@ -596,12 +599,12 @@ def apply_move(board, row, col, color, player):
     y = 10
     # pdb.set_trace()
     # remove candidate squares
-    if (row * board_size + col) in board_candidates:
-        board_candidates.remove((row * board_size + col))
+    if (row * board_size + col) in open_board_spots:
+        open_board_spots.remove((row * board_size + col))
     # update game status
-    update_game_status(row, col, color, board)
+    eval_status(row, col, color, board)
     # update score for player
-    update_player_score(board, row, col, player)
+    plyr_score_update(board, row, col, player)
 
     player['last_move_row'] = row
     player['last_move_col'] = col
@@ -610,7 +613,7 @@ def apply_move(board, row, col, color, player):
 
 def main():
     global human_is_dark
-    global board_candidates
+    global open_board_spots
     global human_player
     global com_player
     global is_human_turn
@@ -628,7 +631,7 @@ def main():
 
 
     for x in range(board_size*board_size):
-        board_candidates.add(x)
+        open_board_spots.add(x)
 
 
     print_board(board)
@@ -645,9 +648,9 @@ def main():
 
         row, col = get_human_move() if is_human_turn else get_comp_move(board, human_player, com_player, is_black_turn)
         if current_player == human_player:
-            apply_move(board, row, col, current_player['color'], human_player)
+            make_move(board, row, col, current_player['color'], human_player)
         else:
-            apply_move(board, row, col, current_player['color'], com_player)
+            make_move(board, row, col, current_player['color'], com_player)
 
         print
         print_board(board)
